@@ -5,6 +5,20 @@ export const API_VERSION = "v1" as const;
 export const AgentNameSchema = z.enum(["opencode", "claude", "codex"]);
 export type AgentName = z.infer<typeof AgentNameSchema>;
 
+export const AgentStopReasonSchema = z.enum([
+  "end_turn",
+  "cancelled",
+  "max_tokens",
+  "max_turn_requests",
+  "refusal",
+]);
+
+export const StopReasonSchema = z.enum([
+  ...AgentStopReasonSchema.options,
+  "empty_response",
+]);
+export type StopReason = z.infer<typeof StopReasonSchema>;
+
 export const PermissionPolicySchema = z.enum([
   "best-effort-read-only",
   "best-effort-workspace-write",
@@ -48,6 +62,7 @@ export type RunRequestInput = z.input<typeof RunRequestSchema>;
 export const CreateSessionRequestSchema = SessionConfigurationSchema.extend({
   agent: AgentNameSchema,
   cwd: z.string().min(1),
+  durable: z.boolean().default(false),
   timeoutMs: z.number().int().positive().default(900_000),
   idleTimeoutMs: z.number().int().positive().optional(),
 }).strict();
@@ -59,6 +74,37 @@ export type CreateSessionRequestInput = z.input<
 export const PromptRequestSchema = PromptConfigurationSchema;
 export type PromptRequest = z.infer<typeof PromptRequestSchema>;
 export type PromptRequestInput = z.input<typeof PromptRequestSchema>;
+
+export const RecoveryMetaSchema = z.enum(["resumed", "fallback-new-session"]);
+export type RecoveryMeta = z.infer<typeof RecoveryMetaSchema>;
+
+export const SessionRefSchema = z
+  .string()
+  .regex(
+    /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/,
+    "sessionRef must be a UUID",
+  );
+
+export const ResumeSessionRequestSchema = z
+  .object({
+    apiVersion: z.literal(API_VERSION),
+    sessionRef: SessionRefSchema,
+    fallback: z.enum(["new-session"]).optional(),
+  })
+  .strict();
+export type ResumeSessionRequest = z.infer<typeof ResumeSessionRequestSchema>;
+export type ResumeSessionRequestInput = z.input<
+  typeof ResumeSessionRequestSchema
+>;
+
+export const ForgetRequestSchema = z
+  .object({
+    apiVersion: z.literal(API_VERSION),
+    sessionRef: SessionRefSchema,
+  })
+  .strict();
+export type ForgetRequest = z.infer<typeof ForgetRequestSchema>;
+export type ForgetRequestInput = z.input<typeof ForgetRequestSchema>;
 
 export const GatewayErrorCodeSchema = z.enum([
   "invalid_request",
@@ -74,6 +120,8 @@ export const GatewayErrorCodeSchema = z.enum([
   "unsupported_model",
   "unsupported_session_close",
   "unsupported_session_recovery",
+  "incompatible_session",
+  "session_cleanup_failed",
   "invalid_session_state",
   "internal_error",
 ]);
@@ -116,7 +164,7 @@ export const CompletedRunResultSchema = z
     agent: AgentNameSchema,
     cwd: z.string(),
     durationMs: z.number().int().nonnegative(),
-    stopReason: z.string(),
+    stopReason: StopReasonSchema,
     events: z.array(RunEventSchema).optional(),
   })
   .strict();

@@ -94,6 +94,16 @@ cat request.json | node dist/cli.js run \
 
 stdout 只输出最终 JSON，stderr 输出不含 prompt、Agent 最终文本或文件内容的 JSONL 事件。
 
+成功结果的 `stopReason` 是可枚举值：
+
+- `end_turn`: Agent 正常完成并返回最终文本。
+- `empty_response`: Agent 完成 Turn，但在等待迟到通知的安静期结束后仍未发送任何 `agent_message_chunk`。
+- `max_tokens`: Agent 因 token 上限停止。
+- `max_turn_requests`: Agent 因 Turn Request 上限停止。
+- `refusal`: Agent 拒绝继续执行。
+
+`cancelled` 会作为失败结果返回。调用方应将 `empty_response` 与正常文本结果区分处理。
+
 ## TypeScript API
 
 ```ts
@@ -185,7 +195,51 @@ try {
 - 同一个 Managed Session 一次只允许一个进行中的 Agent Turn。
 - `release()` 释放本地 adapter 连接和进程资源，不承诺关闭 Agent 侧保存的 session。
 - `close()` 通过 ACP `session/close` 请求 Agent 释放 session，随后释放本地资源。Agent 未声明该能力时返回 `unsupported_session_close`。
-- Phase 2A 的有状态能力仅适用于同一 Node.js 进程。JSON CLI 仍只提供 `doctor` 和无状态 `run`。跨进程恢复属于 Phase 3。
+- durable session 的 `close()` 在 ACP 请求前将记录标记为 `closing`。`closing` 记录不可恢复，只能通过 `forget` 清理。Agent 侧关闭成功但 Gateway 记录删除失败时返回 `session_cleanup_failed`。
+- Phase 2A 的有状态能力仅适用于同一 Node.js 进程。跨进程持久化 session 恢复属于 Phase 3（见下方）。
+
+## Durable Sessions (Phase 3)
+
+跨进程持久化 Managed Session 创建的推荐入口是 `start-session`，它原子地创建持久化 session、执行首轮 Agent Turn 并在 adapter 进程退出前释放本地资源：
+
+```bash
+node dist/cli.js start-session \
+  --agent opencode \
+  --cwd /absolute/path/to/workspace \
+  --input request.json
+```
+
+`start-session` 在 stdout 上同时返回 `sessionRef` 和首轮 Run Result。此后可通过新进程恢复并继续 session：
+
+```bash
+# 恢复 session
+node dist/cli.js resume-session --session-ref <session-ref>
+
+# 执行后续 Agent Turn
+cat prompt.json | node dist/cli.js prompt \
+  --session-ref <session-ref>
+
+# 关闭 session（删除 Gateway 与 Agent 侧状态）
+node dist/cli.js close --session-ref <session-ref>
+```
+
+durable session 状态目录必须位于单机本地文件系统。`ACP_AGENT_GATEWAY_STATE_DIR` 覆盖值必须是绝对路径。Gateway 通过 PID 判活与原子 lease 文件创建阻止多个本机进程同时使用同一个 `sessionRef`；不支持多个主机共享 `ACP_AGENT_GATEWAY_STATE_DIR`，也不支持将该目录放在 NFS 等共享文件系统上。进程异常退出后，下一次操作会回收 stale lease。若进程恰好在 stale lease 回收窗口内退出，Gateway 会 fail closed；清理同一引用残留的 `.reclaim.json` 后可重试。lease 只记录 PID，不读取 Linux 专属 `/proc` 启动时间；极少数 PID 复用场景会保守地继续阻止操作。确认没有活跃 Gateway 使用该引用后，清理对应 `.lease.json` 可恢复。
+
+如果持久化记录文件存在但 JSON 损坏或 schema 不合法，恢复会返回 `invalid_session_state` 并保留原文件供诊断。确认不再需要该引用后，可通过 `forget` 显式删除 Gateway 状态。
+
+`forget` 是幂等的 Gateway 状态清理命令。记录原本不存在时也返回成功；它不表示 Agent 侧 session 已关闭。
+
+完整 CLI 命令集：
+
+| 命令             | 作用                                     |
+| ---------------- | ---------------------------------------- |
+| `start-session`  | 创建持久化 session + 首轮 Turn + release |
+| `resume-session` | 从持久化 Session Reference 恢复          |
+| `prompt`         | 恢复已有上下文 → 执行后续 Turn → release |
+| `close`          | 关闭 Agent 侧 session + 删除持久化记录   |
+| `forget`         | 仅删除 Gateway 持久化记录                |
+| `run`            | 无状态一次性执行                         |
+| `doctor`         | 报告 adapter 可用性                      |
 
 ## Permission Policies
 
@@ -203,6 +257,11 @@ try {
 - [Context glossary](./CONTEXT.md)
 - [Phased implementation plan](./docs/plans/0001-acp-agent-gateway-phased-implementation.md)
 - [Linux Bubblewrap compatibility](./docs/compatibility/linux-bubblewrap.md)
-- [OpenCode ACP compatibility](./docs/compatibility/opencode-acp-1.15.12.md)
+- [OpenCode ACP 1.15.12 compatibility](./docs/compatibility/opencode-acp-1.15.12.md)
+- [OpenCode ACP 1.15.13 compatibility](./docs/compatibility/opencode-acp-1.15.13.md)
 - [Claude ACP compatibility](./docs/compatibility/claude-agent-acp-0.39.0.md)
 - [Codex ACP compatibility](./docs/compatibility/codex-acp-0.15.0.md)
+- [ADR 0019: Strict durable session recovery](./docs/adr/0019-strictly-recover-durable-sessions.md)
+- [ADR 0020: Synthesize empty_response](./docs/adr/0020-synthesize-empty-response-from-late-notifications.md)
+- [ADR 0021: Atomic start-session](./docs/adr/0021-atomic-start-session-must-create-and-prompt-before-release.md)
+- [ADR 0022: Local durable session leases](./docs/adr/0022-use-local-leases-for-durable-session-exclusivity.md)

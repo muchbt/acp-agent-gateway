@@ -29,6 +29,9 @@
     "smoke:agent": "node scripts/smoke-agent.mjs",
     "smoke:opencode": "node scripts/smoke-opencode.mjs",
     "smoke:opencode:stateful": "node scripts/smoke-opencode-stateful.mjs",
+    "smoke:recovery:opencode": "SMOKE_AGENT=opencode node scripts/smoke-recovery-opencode.mjs",
+    "smoke:recovery:claude": "SMOKE_AGENT=claude node scripts/smoke-recovery-claude.mjs",
+    "smoke:recovery:codex": "SMOKE_AGENT=codex node scripts/smoke-recovery-codex.mjs",
     "check": "npm run lint && npm run format:check && npm run build && npm run test"
   },
   "dependencies": {

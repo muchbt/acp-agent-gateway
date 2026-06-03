@@ -9,6 +9,7 @@ This report records local compatibility validation for OpenCode `1.15.12` throug
 - OpenCode advertises standard ACP initialization, session creation, prompt, cancellation, load, list, resume, and close capabilities.
 - OpenCode can emit final text as standard `agent_message_chunk` notifications.
 - OpenCode may emit `agent_message_chunk` after `session/prompt` returns. The Gateway therefore drains notifications until a short quiet period before returning its Run Result.
+- The post-prompt quiet period is `500ms`. A completed Turn without final text returns `stopReason: "empty_response"`.
 - Model behavior is not uniform. Some OpenCode/provider paths complete without final text or remain inactive until the Gateway idle timeout cancels the run.
 - Gateway consumers should select an explicitly validated model instead of relying on the OpenCode default model.
 - Output compatibility does not imply provider stability. Even the selected smoke model intermittently remained inactive in full Gateway runs.
@@ -29,6 +30,8 @@ The Phase 2A stateful Gateway smoke test created one Managed Session, completed 
 
 The Phase 2B `strict-read-only` sample completed ACP initialization and session creation in 4/4 runs, then reached idle timeout without model text in 4/4 runs. No Bubblewrap filesystem error occurred. Sandbox enforcement is validated separately through deterministic write-boundary tests and successful sandbox-backed Codex and Claude smoke runs.
 
+After the `500ms` quiet-period and `empty_response` contract update, a Gateway smoke run with `opencode-go/qwen3.6-plus` returned the expected final text.
+
 The probe is intentionally opt-in because it invokes configured models:
 
 ```bash
@@ -36,6 +39,10 @@ PROBE_MODEL=opencode-go/qwen3.6-plus npm run probe:opencode
 SMOKE_REQUIRE_TEXT=1 npm run smoke:opencode
 npm run smoke:opencode:stateful
 ```
+
+## Phase 3 recovery
+
+OpenCode advertises `session/resume` and `session/close`. The Gateway prefers `session/resume` for recovery. Cross-process durable session recovery was validated with OpenCode 1.15.13 using `start-session` (see `docs/compatibility/opencode-acp-1.15.13.md`). The older 1.15.12 release was not revalidated for Phase 3 recovery independently.
 
 ## Boundary
 

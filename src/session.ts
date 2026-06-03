@@ -33,6 +33,9 @@ export interface OpenSessionRequest {
   signal?: AbortSignal;
   collector: EventCollector;
   onActivity(): void;
+  operation?: "new" | "resume" | "load";
+  acpSessionId?: string;
+  sessionRef?: string;
 }
 
 interface SessionHooks {
@@ -158,18 +161,23 @@ export class SessionHandle {
     await this.#transport.terminate();
   }
 
+  supportsClose(): boolean {
+    return Boolean(
+      this.initializeResponse.agentCapabilities?.sessionCapabilities?.close,
+    );
+  }
+
   async close(): Promise<void> {
     this.#assertReady("close");
+    if (!this.supportsClose()) {
+      await this.release();
+      throw new GatewayError(
+        "unsupported_session_close",
+        "Agent does not advertise session/close support",
+      );
+    }
     this.#state = "closed";
     try {
-      if (
-        !this.initializeResponse.agentCapabilities?.sessionCapabilities?.close
-      ) {
-        throw new GatewayError(
-          "unsupported_session_close",
-          "Agent does not advertise session/close support",
-        );
-      }
       await this.#connection.closeSession({ sessionId: this.acpSessionId });
     } finally {
       await this.#transport.terminate();
@@ -201,7 +209,7 @@ export class SessionHandle {
   }
 }
 
-const POST_PROMPT_QUIET_PERIOD_MS = 250;
+const POST_PROMPT_QUIET_PERIOD_MS = 500;
 const POST_PROMPT_MAX_DRAIN_MS = 2_000;
 const POST_PROMPT_POLL_INTERVAL_MS = 25;
 
@@ -215,6 +223,53 @@ export class SessionManager {
   ) {
     this.#registry = registry;
     this.#transportFactory = transportFactory;
+  }
+
+  async probe(
+    agent: string,
+    permissionPolicy: PermissionPolicy,
+    cwd?: string,
+    signal?: AbortSignal,
+  ): Promise<InitializeResponse> {
+    if (signal?.aborted) {
+      throw new GatewayError("cancelled", "Agent run was cancelled");
+    }
+    const adapter = await this.#registry.resolve(agent);
+    const cwdNormalized = await normalizeWorkspace(cwd ?? process.cwd());
+    const transport = await this.#transportFactory(
+      adapter,
+      cwdNormalized,
+      permissionPolicy,
+    );
+    let termination: Promise<void> | undefined;
+    const terminate = () => (termination ??= transport.terminate());
+    const onAbort = () => {
+      void terminate().catch(() => undefined);
+    };
+    signal?.addEventListener("abort", onAbort, { once: true });
+    try {
+      if (signal?.aborted) {
+        await terminate();
+        throw new GatewayError("cancelled", "Agent run was cancelled");
+      }
+      const connection = new ClientSideConnection(
+        () => ({
+          requestPermission: async () => ({
+            outcome: { outcome: "cancelled" },
+          }),
+          sessionUpdate: async () => undefined,
+        }),
+        transport.stream,
+      );
+      return await connection.initialize({
+        protocolVersion: PROTOCOL_VERSION,
+        clientCapabilities: {},
+        clientInfo: { name: "@local/acp-agent-gateway", version: "0.1.0" },
+      });
+    } finally {
+      signal?.removeEventListener("abort", onAbort);
+      await terminate();
+    }
   }
 
   async open(request: OpenSessionRequest): Promise<SessionHandle> {
@@ -234,8 +289,9 @@ export class SessionManager {
     }
     request.signal?.addEventListener("abort", terminateOnAbort, { once: true });
     request.collector.emit({ event: "adapter_started" });
-    const sessionRef = randomUUID();
+    const sessionRef = request.sessionRef ?? randomUUID();
     let sessionHandle: SessionHandle | undefined;
+    let suppressReplay = request.operation === "load";
 
     const client: Client = {
       requestPermission: async (params) =>
@@ -243,10 +299,13 @@ export class SessionManager {
           ? sessionHandle.requestPermission(params)
           : this.#requestPermission(request, sessionRef, params),
       sessionUpdate: async (params) => {
+        request.onActivity();
+        if (suppressReplay) {
+          return;
+        }
         if (sessionHandle) {
           sessionHandle.receiveNotification(params);
         } else {
-          request.onActivity();
           emitSessionUpdate(request.collector, sessionRef, params);
         }
       },
@@ -267,20 +326,53 @@ export class SessionManager {
           `Unsupported ACP protocol version: ${initializeResponse.protocolVersion}`,
         );
       }
-      const session = await connection.newSession({ cwd, mcpServers: [] });
-      request.onActivity();
-      if (request.model) {
-        await configureModel(
-          connection,
-          session.sessionId,
-          session.configOptions ?? [],
-          request.model,
-        );
+
+      let sessionId: string;
+      let configOptions: SessionConfigOption[] | null | undefined;
+
+      if (request.operation === "resume" && request.acpSessionId) {
+        await connection.resumeSession({
+          sessionId: request.acpSessionId,
+          cwd,
+          mcpServers: [],
+        });
+        sessionId = request.acpSessionId;
         request.onActivity();
+      } else if (request.operation === "load" && request.acpSessionId) {
+        suppressReplay = true;
+        const session = await connection.loadSession({
+          sessionId: request.acpSessionId,
+          cwd,
+          mcpServers: [],
+        });
+        suppressReplay = false;
+        sessionId = request.acpSessionId;
+        configOptions = session.configOptions;
+        request.onActivity();
+      } else if (request.operation) {
+        throw new GatewayError(
+          "invalid_request",
+          `Cannot ${request.operation} without a valid ACP session ID`,
+        );
+      } else {
+        const session = await connection.newSession({ cwd, mcpServers: [] });
+        sessionId = session.sessionId;
+        configOptions = session.configOptions;
+        request.onActivity();
+        if (request.model) {
+          await configureModel(
+            connection,
+            sessionId,
+            configOptions ?? [],
+            request.model,
+          );
+          request.onActivity();
+        }
       }
+
       sessionHandle = new SessionHandle({
         sessionRef,
-        acpSessionId: session.sessionId,
+        acpSessionId: sessionId,
         cwd,
         adapter,
         initializeResponse,

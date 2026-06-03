@@ -65,11 +65,32 @@ const BUILT_IN_ADAPTERS: Record<AgentName, AdapterDefinition> = {
   },
 };
 
+function loadDefinitions(): Record<AgentName, AdapterDefinition> {
+  const fakeCommand = process.env.ACP_AGENT_GATEWAY_FAKE_ADAPTER;
+  if (!fakeCommand) {
+    return BUILT_IN_ADAPTERS;
+  }
+  const segments = fakeCommand.split(" ");
+  const command = segments[0];
+  const args = segments.slice(1);
+  if (!command) {
+    return BUILT_IN_ADAPTERS;
+  }
+  return {
+    ...BUILT_IN_ADAPTERS,
+    opencode: {
+      ...BUILT_IN_ADAPTERS.opencode,
+      command,
+      args,
+    },
+  };
+}
+
 export class AgentRegistry {
   readonly #definitions: Record<AgentName, AdapterDefinition>;
 
   constructor(
-    definitions: Record<AgentName, AdapterDefinition> = BUILT_IN_ADAPTERS,
+    definitions: Record<AgentName, AdapterDefinition> = loadDefinitions(),
   ) {
     this.#definitions = definitions;
   }

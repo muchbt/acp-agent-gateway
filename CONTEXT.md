@@ -68,17 +68,41 @@ _Avoid_: Session Close、删除远端 session
 请求 ACP Coding Agent 关闭 Managed Session 并释放 Agent 侧资源。它依赖 Agent 明确声明 `session/close` 能力。
 _Avoid_: Session Release、静默降级
 
+**Session Closing**:
+已经开始执行 Session Close、但 Gateway 尚未完成本地清理的 Managed Session 状态。它不可用于 Session Recovery，只能通过 Session Forget 清理 Gateway 状态。
+_Avoid_: 可恢复 session、Session Close 成功
+
 **Session Reference**:
-ACP Agent Gateway 返回给 Business Consumer 的会话标识。它用于定位可继续使用的 Managed Session。
-_Avoid_: ACP 进程 ID、业务任务 ID
+ACP Agent Gateway 为可恢复 Managed Session 持久化的会话标识。它用于定位可继续使用的 Managed Session。
+_Avoid_: ACP 进程 ID、运行追踪标识、业务任务 ID
+
+**Session Lease**:
+ACP Agent Gateway 在使用 durable Managed Session 期间持有的单机独占租约。它通过本地状态目录中的原子文件创建阻止多个 Gateway 进程同时恢复、提示、关闭或遗忘同一个 Session Reference。
+_Avoid_: 分布式锁、多主机租约、Agent 侧 session 生命周期
+
+**Run Reference**:
+ACP Agent Gateway 为一次 Agent Run 生成的追踪标识。它用于关联运行事件与结果，不承诺可用于 Session Recovery。
+_Avoid_: Session Reference、ACP session ID
 
 **Session Recovery**:
 使用 Session Reference 继续 Managed Session 的显式操作。
 _Avoid_: 静默新建 session、自动丢弃历史上下文
 
+**Session Forget**:
+删除 ACP Agent Gateway 持久化的 Session Reference。它不承诺关闭 ACP Coding Agent 保存的会话状态。
+_Avoid_: Session Close、删除 Agent 侧 session
+
 **Session Compatibility**:
 Session Recovery 前对 Session Reference 与当前请求执行环境的一致性校验。
 _Avoid_: 尽力恢复、隐式迁移
+
+**Session Migration**:
+将 Managed Session 切换到不同执行环境的显式操作。它不是 Session Recovery 的一部分。
+_Avoid_: Session Recovery、隐式覆盖
+
+**Recovery Fallback**:
+Session Recovery 失败后由 Business Consumer 显式选择的新建 Managed Session 操作。它生成新的 Session Reference，不冒充已恢复的上下文。
+_Avoid_: Session Recovery、静默新建 session、覆盖旧 reference
 
 **Historical Replay**:
 ACP Coding Agent 在加载 Managed Session 时重新发送的历史事件。
@@ -101,8 +125,15 @@ _Avoid_: best-effort 策略、ACP 权限提示
 - 一个 **Managed Session** 可包含一个或多个顺序执行的 **Agent Turn**。
 - 一个 **Managed Session** 可产生一个或多个 **Run Event** 与 **Run Result**。
 - **Session Release** 不等同于 **Session Close**。
+- **Session Closing** 不可用于 **Session Recovery**。
+- 一个 durable **Managed Session** 同时只允许一个本机进程持有 **Session Lease**。
+- **Session Lease** 只适用于单机本地文件系统，不支持多个主机共享状态目录。
+- **Session Forget** 不等同于 **Session Close**。
+- **Run Reference** 不等同于 **Session Reference**。
 - **Business Consumer** 可使用 **Session Reference** 发起 **Session Recovery**。
 - **Session Recovery** 必须满足 **Session Compatibility**。
+- **Session Recovery** 不执行 **Session Migration**。
+- **Recovery Fallback** 必须生成新的 **Session Reference**。
 - **Historical Replay** 不是当前 **Agent Run** 的实时进度。
 - 一个 **Agent Run** 应用一个明确的 **Permission Policy**。
 - **Sandbox-backed Permission Policy** 将 adapter 状态目录与 **Workspace** 分开处理。
