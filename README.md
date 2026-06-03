@@ -13,6 +13,7 @@
 - 使用 `strict-read-only` 或 `workspace-write` 时，需要 Linux 和位于 `PATH` 的 Bubblewrap (`bwrap`)
 
 Gateway 不会在业务运行期间下载 adapter 或执行临时 `npx` 安装。
+Gateway npm tarball 会内置自身运行时依赖 `@agentclientprotocol/sdk` 与 `zod` 的锁定版本，因此离线安装 Gateway tarball 不依赖目标机 npm cache 中的这两个包。ACP adapters 仍是外部运行时依赖，需要由环境单独安装或提供。
 
 ## Install
 
