@@ -35,9 +35,13 @@
     "check": "npm run lint && npm run format:check && npm run build && npm run test"
   },
   "dependencies": {
-    "@agentclientprotocol/sdk": "^0.22.1",
-    "zod": "^4.4.3"
+    "@agentclientprotocol/sdk": "0.22.1",
+    "zod": "4.4.3"
   },
+  "bundledDependencies": [
+    "@agentclientprotocol/sdk",
+    "zod"
+  ],
   "devDependencies": {
     "@eslint/js": "^10.0.1",
     "@types/node": "^25.9.1",
