@@ -21,6 +21,20 @@ npm install
 npm run build
 ```
 
+同一台机器同时用于开发和离线交付测试时，不建议让测试安装覆盖当前用户的全局 `acp-agent-gateway`。运行消费者离线交付目录中的 `install-gateway.sh` 时，可以用 npm prefix 隔离全局安装：
+
+```bash
+export NPM_CONFIG_PREFIX=/tmp/acp-gateway-test-prefix
+export PATH="$NPM_CONFIG_PREFIX/bin:$PATH"
+./install-gateway.sh
+```
+
+也可以完全跳过安装脚本，直接让消费者指向本仓库构建产物：
+
+```bash
+export ACP_AGENT_GATEWAY_BIN="node /path/to/acp-agent-gateway/dist/cli.js"
+```
+
 ## Doctor
 
 ```bash
